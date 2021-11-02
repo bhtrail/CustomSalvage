@@ -109,8 +109,22 @@
     <Compile Include="AssemblyVariant.cs" />
     <Compile Include="ChassisHandler.cs" />
     <Compile Include="ContractHelper.cs" />
+    <Compile Include="CustomResourse.cs" />
     <Compile Include="LootableMech.cs" />
     <Compile Include="LostUnitActions.cs" />
+    <Compile Include="MechBroke\BrokeTools.cs" />
+    <Compile Include="MechBroke\Conditions\Boolean.cs" />
+    <Compile Include="MechBroke\Conditions\CompanyStat.cs" />
+    <Compile Include="MechBroke\Conditions\ConditionsHandler.cs" />
+    <Compile Include="MechBroke\Conditions\MechTags.cs" />
+    <Compile Include="MechBroke\Conditions\PilotTag.cs" />
+    <Compile Include="MechBroke\Conditions\PlanetTags.cs" />
+    <Compile Include="MechBroke\DiceBroke.cs" />
+    <Compile Include="MechBroke\CSTags.cs" />
+    <Compile Include="MechBroke\IBrokeMech.cs" />
+    <Compile Include="MechBroke\RandomBroke.cs" />
+    <Compile Include="MechBroke\TagsDatabase.cs" />
+    <Compile Include="MechBroke\TechKitCustom.cs" />
     <Compile Include="MultyBuyWidgetHelper.cs" />
     <Compile Include="PartsNumCalculations.cs" />
     <Compile Include="Patches\Contract_GenerateSalvage.cs" />
@@ -123,7 +137,6 @@
     <Compile Include="Patches\SGEventPanel_SetEvent.cs" />
     <Compile Include="Patches\SimGameState_AddMechPart.cs" />
     <Compile Include="Patches\SimGameState_GetAllInventoryMechDefs.cs" />
-    <Compile Include="Patches\SimGameState_RespondToDefsLoadComplete.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="RecoveryDelegates.cs" />
   </ItemGroup>

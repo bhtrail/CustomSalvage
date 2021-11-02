@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using BattleTech;
 using BattleTech.Data;
 using BattleTech.UI;
+using CustomSalvage.MechBroke;
 #if USE_CC
 using CustomComponents;
 #endif
@@ -217,6 +218,7 @@ namespace CustomSalvage
         {
             public int count;
             public int used;
+            public int spare;
             public int cbills;
             public string mechname;
             public string mechid;
@@ -228,6 +230,7 @@ namespace CustomSalvage
                 cbills = cb;
                 mechname = new Text(mn).ToString();
                 mechid = mi;
+                spare = 0;
             }
         }
 
@@ -301,10 +304,14 @@ namespace CustomSalvage
                 Control.Instance.LogError($"ERROR in ClearInventory", e);
             }
 
-            if (Control.Instance.Settings.BrokenMech)
+            switch (Control.Instance.Settings.MechBrokeType)
             {
-                BrokeMech(new_mech, sim, other_parts);
-
+                case BrokeType.Random:
+                    RandomBroke.BrokeMech(new_mech, sim, other_parts);
+                    break;
+                case BrokeType.Normalized:
+                    DiceBroke.BrokeMech(new_mech, sim, other_parts, used_parts.Sum(i => i.spare));
+                    break;
             }
 
             try
@@ -321,230 +328,6 @@ namespace CustomSalvage
 
         }
 
-        public class AssemblyChancesResult
-        {
-            public float LimbChance { get; private set; } = Control.Instance.Settings.RepairMechLimbsChance;
-            public float CompFChance { get; private set; } = Control.Instance.Settings.RepairComponentsFunctionalThreshold;
-            public float CompNFChance { get; private set; } = Control.Instance.Settings.RepairComponentsNonFunctionalThreshold;
-
-            public int BaseTP { get; private set; } = Control.Instance.Settings.BaseTP;
-            public float LimbTP { get; private set; } = Control.Instance.Settings.LimbChancePerTp;
-            public float CompTP { get; private set; } = Control.Instance.Settings.ComponentChancePerTp;
-#if CCDEBUG
-            public string DEBUGText { get; private set; } = "";
-#endif
-            public AssemblyChancesResult(MechDef mech, SimGameState sim, int other_parts)
-            {
-                var settings = Control.Instance.Settings;
-                if (settings.RepairChanceByTP)
-                {
-                    if (settings.BrokeByTag != null && settings.BrokeByTag.Length > 1)
-                    {
-                        int numb = 0;
-                        int numl = 0;
-                        int numc = 0;
-
-                        int sumb = 0;
-                        float suml = 0;
-                        float sumc = 0;
-
-                        foreach (var info in settings.BrokeByTag)
-                        {
-                            if (mech.MechTags.Contains(info.tag) || mech.Chassis.ChassisTags.Contains(info.tag))
-                            {
-#if CCDEBUG
-                                string logstr = info.tag;
-#endif
-                                if (info.BaseTp > 0)
-                                {
-                                    sumb += info.BaseTp;
-                                    numb += 1;
-#if CCDEBUG
-                                    logstr += $" base:{info.BaseTp}";
-#endif
-                                }
-
-                                if (info.Limb > 0)
-                                {
-                                    suml += info.Limb;
-                                    numl += 1;
-#if CCDEBUG
-                                    logstr += $" limb:{info.Limb:0.000}";
-#endif
-                                }
-                                if (info.Component > 0)
-                                {
-                                    sumc += info.Component;
-                                    numc += 1;
-#if CCDEBUG
-                                    logstr += $" comp:{info.Component:0.000}";
-#endif
-                                }
-#if CCDEBUG
-                                Control.Instance.LogDebug(logstr);
-#endif
-
-                            }
-                        }
-
-                        if (numb > 0)
-                            BaseTP = sumb / numb;
-                        if (numl > 0)
-                            LimbTP = suml / numl;
-                        if (numc > 0)
-                            CompTP = sumc / numc;
-
-                        Control.Instance.LogDebug($"totals: base:{BaseTP}, limb:{LimbTP:0.000}, component:{CompTP:0.000}");
-
-                        var tp = sim.MechTechSkill - BaseTP;
-                        var ltp = Mathf.Clamp(tp * LimbTP, -settings.RepairTPMaxEffect, settings.RepairTPMaxEffect);
-                        var ctp = Mathf.Clamp(tp * CompTP, -settings.RepairTPMaxEffect, settings.RepairTPMaxEffect);
-
-                        Control.Instance.LogDebug($"LeftTP: {tp} limb_change = {ltp:0.000} comp_change = {ctp * CompTP:0.000}");
-#if CCDEBUG
-                        var oLimbChance = LimbChance;
-                        var oCompFChance = CompFChance;
-                        var oCompNFChance = CompNFChance;
-#endif
-                        LimbChance = Mathf.Clamp(LimbChance + ltp, settings.LimbMinChance, settings.LimbMaxChance);
-                        CompFChance = Mathf.Clamp(CompFChance + ctp, settings.ComponentMinChance, settings.ComponentMaxChance);
-                        CompNFChance = Mathf.Clamp(CompNFChance + ctp, CompFChance, settings.ComponentMaxChance);
-
-#if CCDEBUG
-                        DEBUGText = $"\nLTP : {LimbTP:0.000}/{ltp:0.000}/{(int)(oLimbChance * 100)}%";
-                        DEBUGText = $"\nCTP : {CompTP:0.000}/{ctp:0.000}/{(int)(oCompFChance * 100)}%/{(int)(oCompNFChance * 100)}%";
-#endif
-                    }
-                }
-            }
-        }
-
-        private static void BrokeMech(MechDef new_mech, SimGameState sim, int other_parts)
-        {
-            try
-            {
-
-                Control.Instance.LogDebug($"-- broke parts");
-                var rnd = new Random();
-                var chances = new AssemblyChancesResult(new_mech, sim, other_parts);
-                var settings = Control.Instance.Settings;
-
-                Control.Instance.LogDebug($"--- RepairMechLimbsChance: {chances.LimbChance}, RepairMechLimbs: {settings.RepairMechLimbs} ");
-                float roll = 0;
-                //hd
-                roll = (float)rnd.NextDouble();
-                Control.Instance.LogDebug($"--- HeadRepaired: {settings.HeadRepaired}, roll: {roll} ");
-                if (!settings.HeadRepaired && (!settings.RepairMechLimbs ||
-                                               roll > chances.LimbChance))
-                    new_mech.Head.CurrentInternalStructure = 0f;
-                else if (settings.RandomStructureOnRepairedLimbs)
-                    new_mech.Head.CurrentInternalStructure *= Math.Min(settings.MinStructure, (float)rnd.NextDouble());
-
-                //ct
-                roll = (float)rnd.NextDouble();
-                Control.Instance.LogDebug($"--- CentralTorsoRepaired: {settings.CentralTorsoRepaired}, roll: {roll} ");
-                if (!settings.CentralTorsoRepaired && (!settings.RepairMechLimbs ||
-                                                       roll > chances.LimbChance))
-                    new_mech.CenterTorso.CurrentInternalStructure = 0f;
-                else if (settings.RandomStructureOnRepairedLimbs)
-                    new_mech.CenterTorso.CurrentInternalStructure *= Math.Min(settings.MinStructure, (float)rnd.NextDouble());
-
-                //rt
-                roll = (float)rnd.NextDouble();
-                Control.Instance.LogDebug($"--- RightTorsoRepaired: {settings.RightTorsoRepaired}, roll: {roll} ");
-                if (!settings.RightTorsoRepaired && (!settings.RepairMechLimbs ||
-                                                     roll > chances.LimbChance))
-                    new_mech.RightTorso.CurrentInternalStructure = 0f;
-                else if (settings.RandomStructureOnRepairedLimbs)
-                    new_mech.RightTorso.CurrentInternalStructure *= Math.Min(settings.MinStructure, (float)rnd.NextDouble());
-
-                //lt
-                roll = (float)rnd.NextDouble();
-                Control.Instance.LogDebug($"--- LeftTorsoRepaired: {settings.LeftTorsoRepaired}, roll: {roll} ");
-                if (!settings.LeftTorsoRepaired && (!settings.RepairMechLimbs ||
-                                                    roll > chances.LimbChance))
-                    new_mech.LeftTorso.CurrentInternalStructure = 0f;
-                else if (settings.RandomStructureOnRepairedLimbs)
-                    new_mech.LeftTorso.CurrentInternalStructure *= Math.Min(settings.MinStructure, (float)rnd.NextDouble());
-
-                //ra
-                roll = (float)rnd.NextDouble();
-                Control.Instance.LogDebug($"--- RightArmRepaired: {settings.RightArmRepaired}, roll: {roll} ");
-                if (!settings.RightArmRepaired && (!settings.RepairMechLimbs ||
-                                                   roll > chances.LimbChance))
-                    new_mech.RightArm.CurrentInternalStructure = 0f;
-                else if (settings.RandomStructureOnRepairedLimbs)
-                    new_mech.RightArm.CurrentInternalStructure *= Math.Min(settings.MinStructure, (float)rnd.NextDouble());
-
-                //la
-                roll = (float)rnd.NextDouble();
-                Control.Instance.LogDebug($"--- LeftArmRepaired: {settings.LeftArmRepaired}, roll: {roll} ");
-                if (!settings.LeftArmRepaired && (!settings.RepairMechLimbs ||
-                                                  roll > chances.LimbChance))
-                    new_mech.LeftArm.CurrentInternalStructure = 0f;
-                else if (settings.RandomStructureOnRepairedLimbs)
-                    new_mech.LeftArm.CurrentInternalStructure *= Math.Min(settings.MinStructure, (float)rnd.NextDouble());
-
-                //rl
-
-                roll = (float)rnd.NextDouble();
-                Control.Instance.LogDebug($"--- RightLegRepaired: {settings.RightLegRepaired}, roll: {roll} ");
-                if (!settings.RightLegRepaired && (!settings.RepairMechLimbs ||
-                                                   roll > chances.LimbChance))
-                    new_mech.RightLeg.CurrentInternalStructure = 0f;
-                else if (settings.RandomStructureOnRepairedLimbs)
-                    new_mech.RightLeg.CurrentInternalStructure *= Math.Min(settings.MinStructure, (float)rnd.NextDouble());
-
-                //ll
-                Control.Instance.LogDebug($"--- LeftLegRepaired: {settings.LeftLegRepaired}, roll: {roll} ");
-                roll = (float)rnd.NextDouble();
-                if (!settings.LeftLegRepaired && (!settings.RepairMechLimbs ||
-                                                  roll > chances.LimbChance))
-                    new_mech.LeftLeg.CurrentInternalStructure = 0f;
-                else if (settings.RandomStructureOnRepairedLimbs)
-                    new_mech.LeftLeg.CurrentInternalStructure *= Math.Min(settings.MinStructure, (float)rnd.NextDouble());
-
-                Control.Instance.LogDebug($"-- broke equipment");
-
-                foreach (var cref in new_mech.Inventory)
-                {
-                    if (new_mech.IsLocationDestroyed(cref.MountedLocation))
-                    {
-                        Control.Instance.LogDebug($"---- {cref.ComponentDefID} - location destroyed");
-                        cref.DamageLevel = ComponentDamageLevel.Destroyed;
-                    }
-                    else if (settings.RepairMechComponents)
-                    {
-                        roll = (float)rnd.NextDouble();
-
-                        if (roll < chances.CompFChance)
-                        {
-                            Control.Instance.LogDebug(
-                                $"---- {cref.ComponentDefID} - {roll} vs {chances.CompFChance} - repaired ");
-                            cref.DamageLevel = ComponentDamageLevel.Functional;
-                        }
-                        else if (roll < chances.CompNFChance)
-                        {
-                            Control.Instance.LogDebug(
-                                $"---- {cref.ComponentDefID} - {roll} vs {chances.CompNFChance} - broken ");
-                            cref.DamageLevel = ComponentDamageLevel.NonFunctional;
-                        }
-                        else
-                        {
-                            Control.Instance.LogDebug(
-                                $"---- {cref.ComponentDefID} - {roll} vs {chances.CompNFChance} - fubar ");
-                            cref.DamageLevel = ComponentDamageLevel.Destroyed;
-                        }
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                Control.Instance.LogError($"ERROR in BrokeParts", e);
-                throw;
-            }
-        }
-
         private static void RemoveMechPart(string id, int count)
         {
             var method = mechBay.Sim.GetType()
@@ -556,138 +339,219 @@ namespace CustomSalvage
             }
         }
 
+
         public static void StartDialog()
         {
             ShowInfo();
 
-            var list = GetCompatible(chassis.Description.Id);
-            used_parts = new List<parts_info>();
-            used_parts.Add(new parts_info(GetCount(mech.Description.Id), GetCount(mech.Description.Id), 0,
-                mech.Description.UIName, mech.Description.Id));
-            var info = Proccesed[mech.Description.Id];
-
-            var settings = Control.Instance.Settings;
-
-            float cb = settings.AdaptPartBaseCost * mech.Description.Cost / chassis.MechPartMax;
-            Control.Instance.LogDebug($"base part price for {mech.Description.UIName}({mech.Description.Id}): {cb}. mechcost: {mech.Description.Cost} ");
-            Control.Instance.LogDebug($"-- setting:{settings.AdaptPartBaseCost}, maxparts:{chassis.MechPartMax}, minparts:{info.MinParts}, pricemult: {info.PriceMult}");
-
-            foreach (var mechDef in list)
+            try
             {
-                int num = GetCount(mechDef.Description.Id);
-                if (num == 0)
-                    continue;
-                var id = mechDef.Description.Id;
+                _state = opt_state.Default;
+                var list = GetCompatible(chassis.Description.Id);
+                used_parts = new List<parts_info>();
+                int c = GetCount(mech.Description.Id);
+
+                used_parts.Add(new parts_info(c, c > chassis.MechPartMax ? chassis.MechPartMax : c, 0,
+                    mech.Description.UIName, mech.Description.Id));
+                var info = Proccesed[mech.Description.Id];
+
+                var settings = Control.Instance.Settings;
+
+                float cb = settings.AdaptPartBaseCost * mech.Description.Cost / chassis.MechPartMax;
+                Control.Instance.LogDebug(
+                    $"base part price for {mech.Description.UIName}({mech.Description.Id}): {cb}. mechcost: {mech.Description.Cost} ");
+                Control.Instance.LogDebug(
+                    $"-- setting:{settings.AdaptPartBaseCost}, maxparts:{chassis.MechPartMax}, minparts:{info.MinParts}, pricemult: {info.PriceMult}");
 
 
-                if (id == mech.Description.Id)
-                    continue;
-                else
+                foreach (var mechDef in list)
                 {
-                    float omnimod = 1;
-                    float mod = 1 + Mathf.Abs(mech.Description.Cost - mechDef.Description.Cost) /
-                                (float)mech.Description.Cost * settings.AdaptModWeight;
-                    if (mod > settings.MaxAdaptMod)
-                        mod = settings.MaxAdaptMod;
-
-                    var info2 = Proccesed[mechDef.Description.Id];
-
-                    if (info.Omni && info2.Omni)
-                        if (info.Special && info2.Special)
-                            omnimod = settings.OmniSpecialtoSpecialMod;
-                        else if (!info.Special && !info2.Special)
-                            omnimod = settings.OmniNormalMod;
-                        else
-                            omnimod = settings.OmniSpecialtoNormalMod;
+                    int num = GetCount(mechDef.Description.Id);
+                    if (num == 0)
+                        continue;
+                    var id = mechDef.Description.Id;
 
 
+                    if (id == mech.Description.Id)
+                        continue;
+                    else
+                    {
+                        float omnimod = 1;
+                        float mod = 1 + Mathf.Abs(mech.Description.Cost - mechDef.Description.Cost) /
+                            (float)mech.Description.Cost * settings.AdaptModWeight;
+                        if (mod > settings.MaxAdaptMod)
+                            mod = settings.MaxAdaptMod;
 
-                    var price = (int)(cb * omnimod * mod * info.PriceMult * (settings.ApplyPartPriceMod ? info2.PriceMult : 1));
+                        var info2 = Proccesed[mechDef.Description.Id];
 
-                    Control.Instance.LogDebug($"-- price for {mechDef.Description.UIName}({mechDef.Description.Id}) mechcost: {mechDef.Description.Cost}. price mod: {mod:0.000}, tag mod:{info2.PriceMult:0.000} omnimod:{omnimod:0.000} adopt price: {price}");
-                    used_parts.Add(new parts_info(num, 0, price, mechDef.Description.UIName, mechDef.Description.Id));
+                        if (info.Omni && info2.Omni)
+                            if (info.Special && info2.Special)
+                                omnimod = settings.OmniSpecialtoSpecialMod;
+                            else if (!info.Special && !info2.Special)
+                                omnimod = settings.OmniNormalMod;
+                            else
+                                omnimod = settings.OmniSpecialtoNormalMod;
+
+
+
+                        var price = (int)(cb * omnimod * mod * info.PriceMult *
+                                           (settings.ApplyPartPriceMod ? info2.PriceMult : 1));
+
+                        Control.Instance.LogDebug(
+                            $"-- price for {mechDef.Description.UIName}({mechDef.Description.Id}) mechcost: {mechDef.Description.Cost}. price mod: {mod:0.000}, tag mod:{info2.PriceMult:0.000} omnimod:{omnimod:0.000} adopt price: {price}");
+                        used_parts.Add(
+                            new parts_info(num, 0, price, mechDef.Description.UIName, mechDef.Description.Id));
+                    }
                 }
-            }
 
-            var options = new SimGameEventOption[4];
-
-
-            for (int i = 0; i < 4; i++)
-            {
-                options[i] = new SimGameEventOption()
+                var options = new SimGameEventOption[4];
+                for (int i = 0; i < 4; i++)
                 {
-                    Description = new BaseDescriptionDef($"test_{i}", $"test_{i}", $"test_{i}", ""),
-                    RequirementList = null,
-                    ResultSets = null
-                };
+                    options[i] = new SimGameEventOption()
+                    {
+                        Description = new BaseDescriptionDef($"test_{i}", $"test_{i}", $"test_{i}", ""),
+                        RequirementList = null,
+                        ResultSets = null
+                    };
+                }
+
+                mech_type = GetMechType(mech);
+                if (settings.MechBrokeType == BrokeType.Normalized)
+                {
+                    ConditionsHandler.Instance.PrepareCheck(mech, mechBay.Sim);
+                    DiceBroke.PrepareTechKits(mech, mechBay.Sim);
+                }
+
+                var eventDef = new SimGameEventDef(
+                    SimGameEventDef.EventPublishState.PUBLISHED,
+                    SimGameEventDef.SimEventType.UNSELECTABLE,
+                    EventScope.Company,
+                    new DescriptionDef(
+                        "CustomSalvageAssemblyEvent",
+                        mech_type + " Assembly",
+                        GetCurrentDescription(),
+                        "uixTxrSpot_YangWorking.png",
+                        0, 0, false, "", "", ""),
+                    new RequirementDef { Scope = EventScope.Company },
+                    new RequirementDef[0],
+                    new SimGameEventObject[0],
+                    options.ToArray(),
+                    1, true, new TagSet());
+
+                if (!_hasInitEventTracker)
+                {
+                    eventTracker.Init(new[] { EventScope.Company }, 0, 0, SimGameEventDef.SimEventType.NORMAL,
+                        mechBay.Sim);
+                    _hasInitEventTracker = true;
+                }
+
+                mechBay.Sim.InterruptQueue.QueueEventPopup(eventDef, EventScope.Company, eventTracker);
             }
-
-            mech_type = GetMechType(mech);
-
-
-            var eventDef = new SimGameEventDef(
-                SimGameEventDef.EventPublishState.PUBLISHED,
-                SimGameEventDef.SimEventType.UNSELECTABLE,
-                EventScope.Company,
-                new DescriptionDef(
-                    "CustomSalvageAssemblyEvent",
-                    mech_type +" Assembly",
-                    GetCurrentDescription(),
-                    "uixTxrSpot_YangWorking.png",
-                    0, 0, false, "", "", ""),
-                new RequirementDef { Scope = EventScope.Company },
-                new RequirementDef[0],
-                new SimGameEventObject[0],
-                options.ToArray(),
-                1, true, new TagSet());
-
-            if (!_hasInitEventTracker)
+            catch (Exception e)
             {
-                eventTracker.Init(new[] { EventScope.Company }, 0, 0, SimGameEventDef.SimEventType.NORMAL, mechBay.Sim);
-                _hasInitEventTracker = true;
+                Control.Instance.LogError(e);
             }
-
-            mechBay.Sim.InterruptQueue.QueueEventPopup(eventDef, EventScope.Company, eventTracker);
 
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         public static string GetMechType(MechDef mech)
         {
-           return "'Mech";
+            return "'Mech";
         }
 
         public static string GetCurrentDescription()
         {
+            var strs = Control.Instance.Settings.Strings;
             var text = new Text(mech.Description.UIName);
             var result = $"Assembling <b><color=#20ff20>" + text.ToString() + $"</color></b> Using {mech_type} Parts:\n";
 
             foreach (var info in used_parts)
             {
-                if (info.used > 0)
+                if (info.used > 0 || info.spare > 0)
                 {
-                    result +=
-                        $"\n  <b>{info.mechname}</b>: <color=#20ff20>{info.used}</color> {(info.used == 1 ? "part" : "parts")}";
-                    if (info.cbills > 0)
-                    {
-                        result += $", <color=#ffff00>{SimGameState.GetCBillString(info.cbills * info.used)}</color>";
-                    }
+                    if (info.spare == 0)
+                        result +=
+                            $"\n  <b>{info.mechname}</b>: <color=#20ff20>{info.used}</color> {(info.used == 1 ? "part" : "parts")}";
+                    else if (info.used == 0)
+                        result +=
+                            $"\n  <b>{info.mechname}</b>: <color=#ffff20>{info.spare}</color> {(info.spare == 1 ? "part" : "parts")}";
+                    else
+                        result +=
+                            $"\n  <b>{info.mechname}</b>: <color=#20ff20>{info.used}</color><color=#ffff20>+{info.spare}</color> {(info.used + info.spare == 1 ? "part" : "parts")}";
+                    if (info.cbills > 0 && info.used > 0)
+                        result +=
+                            $", <color=#ffff00>{SimGameState.GetCBillString(info.cbills * info.used)}</color>";
                 }
             }
 
-            int cbills = used_parts.Sum(i => i.used * i.cbills);
+            if (Control.Instance.Settings.MechBrokeType == BrokeType.Normalized)
+            {
+                result += "\n\n";
+                var parts = used_parts.Sum(i => i.used) - used_parts[0].used;
+                var spare = used_parts.Sum(i => i.spare);
+
+                //Control.Instance.Log("1");
+
+                if (Control.Instance.Settings.ShowDetailBonuses)
+                {
+                    var bonuses = DiceBroke.GetBonusString(mech, UnityGameInstance.BattleTechGame.Simulation, parts, spare);
+                    result += bonuses;
+                }
+                //Control.Instance.Log("2");
+                int total = DiceBroke.GetBonus(mech, UnityGameInstance.BattleTechGame.Simulation, parts, spare);
+                result += $"<b><color=#ffff00>{total,-4:+0;-#}" + new Text(strs.TotalBonusCatption) + "</color></b>";
+                ////Control.Instance.Log("3");
+
+                if (DiceBroke.SelectedTechKit != null)
+                {
+                    result += $"\n\nUsing <b>{DiceBroke.SelectedTechKit}</b>";
+                }
+
+                if (Control.Instance.Settings.ShowBrokeChances)
+                {
+                    result += "\n\n";
+                    result += DiceBroke.GetResultString(total);
+                    result += $"\nComponent damage chance: {Mathf.RoundToInt(100 * DiceBroke.GetComp(mech, UnityGameInstance.BattleTechGame.Simulation, parts, spare))}%";
+                }
+            }
+
+            var cbills = GetCbills();
+
             result += $"\n\n  <b>Total:</b> <color=#ffff00>{SimGameState.GetCBillString(cbills)}</color>";
             int left = chassis.MechPartMax - used_parts.Sum(i => i.used);
 
-            if (left > 0)
+            if (_state == opt_state.AddSpare)
+                result += "\n\nSelect spare parts";
+            else if (_state == opt_state.AddMechKit)
+                result += "\n\nSelect TechKit";
+            else if (left > 0)
                 result += $"\n\nNeed <color=#ff2020>{left}</color> more {(left == 1 ? "part" : "parts")}";
             else
                 result += $"\n\nPreparations complete. Proceed?";
             return result;
         }
 
+        private static int GetCbills()
+        {
+            int cbills = used_parts.Sum(i => i.used * i.cbills);
+            if (DiceBroke.SelectedTechKit != null)
+            {
+                var kit = DiceBroke.SelectedTechKit;
+                cbills = (int) ((cbills + kit.CBill) * kit.CBIllMul);
+            }
+
+            return cbills;
+        }
+
+        private enum opt_state { Default, AddSpare, AddMechKit }
+
+        private static opt_state _state = opt_state.Default;
+
         public static void MakeOptions(TextMeshProUGUI eventDescription, SGEventPanel sgEventPanel, DataManager dataManager, RectTransform optionParent, List<SGEventOption> optionsList)
         {
+            var str = Control.Instance.Settings.Strings;
+
             void set_info(SGEventOption option, string text, UnityAction<SimGameEventOption> action)
             {
                 Traverse.Create(option).Field<TextMeshProUGUI>("description").Value.SetText(text);
@@ -700,17 +564,20 @@ namespace CustomSalvage
                 if (num < used_parts.Count)
                 {
                     var info = used_parts[num];
-                    if (info.used < info.count)
+                    var left = info.count - info.used - info.spare;
+
+                    if (left > 0)
                     {
                         if (info.cbills > 0)
-                            set_info(option, $"Add <color=#20ff20>{info.mechname}</color> for <color=#ffff00>{SimGameState.GetCBillString(info.cbills)}</color>, {info.count - info.used} {(info.count - info.used == 1 ? "part" : "parts") }  left",
+                            set_info(option, new Text(left == 1 ? str.ButtonAddPart : str.ButtonAddParts,
+                                info.mechname, SimGameState.GetCBillString(info.cbills), left).ToString(),
                                 arg =>
                                 {
                                     info.used += 1;
                                     MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
                                 });
                         else
-                            set_info(option, $"Add <color=#20ff20>{info.mechname}</color> {info.count - info.used} {(info.count - info.used == 1 ? "part" : "parts") } left",
+                            set_info(option, new Text(left == 1 ? str.ButtonAddPart : str.ButtonAddParts, info.mechname, left).ToString(),
                                 arg =>
                                 {
                                     info.used += 1;
@@ -718,9 +585,8 @@ namespace CustomSalvage
                                 });
                     }
                     else
-                    {
-                        set_info(option, $"<i><color=#a0a0a0>{info.mechname}</color>: <color=#ff4040>All parts used</color></i>", arg => { });
-                    }
+                        set_info(option, new Text(str.ButtonAllPartsUsed, info.mechname).ToString(),
+                            arg => { });
                 }
                 else
                 {
@@ -728,19 +594,94 @@ namespace CustomSalvage
                 }
             }
 
+            void set_add_spare_part(SGEventOption option, int num)
+            {
+                if (num < used_parts.Count)
+                {
+                    var info = used_parts[num];
+                    var left = info.count - info.used - info.spare;
+                    if (left > 0)
+                        set_info(option,
+                            new Text( left == 1 ? str.ButtonAddPart : str.ButtonAddParts, info.mechname, left).ToString(), 
+                            arg =>
+                            {
+                                info.spare += 1;
+                                if (used_parts.Sum(i => i.spare) >= Control.Instance.Settings.MaxSpareParts
+                                    || used_parts.Sum(i => i.count - i.used - i.spare) <= 0)
+                                    _state = opt_state.Default;
+                                MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
+                            });
+                    else
+                        set_info(option,
+                            new Text(str.ButtonAllPartsUsed, info.mechname).ToString(), 
+                            arg => { });
+                }
+                else if (num == used_parts.Count)
+                {
+                    set_info(option, new Text(str.ButtonClearSpare).ToString(), arg =>
+                    {
+                        foreach (var partsInfo in used_parts)
+                            partsInfo.spare = 0;
+                        MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
+                    });
+                }
+                else if (num == used_parts.Count + 1)
+                {
+                    set_info(option, new Text(str.ButtonApplySpare).ToString(), arg =>
+                    {
+                        _state = opt_state.Default;
+                        MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
+                    });
+                }
+                else
+                    set_info(option, "---", arg => { });
+            }
+
             int count = used_parts.Sum(i => i.used);
 
             eventDescription.SetText(GetCurrentDescription());
 
+            if (_state == opt_state.AddMechKit)
+            {
+                set_info(optionsList[0], "---", arg => { });
+                set_info(optionsList[1], "---", arg => { });
+                set_info(optionsList[2], "---", arg => { });
+                set_info(optionsList[3], new Text(str.ButtonCancel).ToString(), arg =>
+                {
+                    _state = opt_state.Default;
+                    MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
+                });
+            }
+            else if (_state == opt_state.AddSpare)
+            {
+                if (used_parts.Count+2 > 4)
+                {
+                    set_add_spare_part(optionsList[0], 0 + page * 3);
+                    set_add_spare_part(optionsList[1], 1 + page * 3);
+                    set_add_spare_part(optionsList[2], 2 + page * 3);
+                    set_info(optionsList[3], new Text(str.ButtonNextPage).ToString(), arg =>
+                    {
+                        page = (page + 1) % ((used_parts.Count + 2) / 3 + 1);
+                        MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
+                    });
 
-            if (count < mechBay.Sim.Constants.Story.DefaultMechPartMax)
+                }
+                else
+                {
+                    set_add_spare_part(optionsList[0], 0);
+                    set_add_spare_part(optionsList[1], 1);
+                    set_add_spare_part(optionsList[2], 2);
+                    set_add_spare_part(optionsList[3], 3);
+                }
+            }
+            else if (count < mechBay.Sim.Constants.Story.DefaultMechPartMax)
             {
                 if (used_parts.Count > 5)
                 {
                     set_add_part(optionsList[0], 1 + page * 3);
                     set_add_part(optionsList[1], 2 + page * 3);
                     set_add_part(optionsList[2], 3 + page * 3);
-                    set_info(optionsList[3], "Next Page >>", arg =>
+                    set_info(optionsList[3], new Text(str.ButtonNextPage).ToString(), arg =>
                     {
                         page = (page + 1) % ((used_parts.Count - 1) / 3 + 1);
                         MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
@@ -758,15 +699,54 @@ namespace CustomSalvage
             else
             {
                 int funds = mechBay.Sim.Funds;
-                int total = used_parts.Sum(i => i.cbills * i.used);
+                int total = GetCbills();
                 if (funds >= total)
-                    set_info(optionsList[0], "Confirm", arg => { CompeteMech(); sgEventPanel.Dismiss(); });
+                    set_info(optionsList[0], new Text(str.ButtonConfirm).ToString(), arg => { CompeteMech(); sgEventPanel.Dismiss(); });
                 else
-                    set_info(optionsList[0], "<color=#ff2020><i>Not enough C-Bills</i></color>", arg => { sgEventPanel.Dismiss(); });
-                set_info(optionsList[1], "Cancel", arg => { sgEventPanel.Dismiss(); });
-                set_info(optionsList[2], "---", arg => { });
-                set_info(optionsList[3], "---", arg => { });
+                    set_info(optionsList[0], new Text(str.ButtonNoMoney).ToString(), arg => { sgEventPanel.Dismiss(); });
+                if (Control.Instance.Settings.MechBrokeType == BrokeType.Normalized)
+                {
+                    if (used_parts.Sum(i => i.count - i.used) == 0)
+                        set_info(optionsList[1], new Text(str.ButtonNoSpare).ToString(), arg => { });
+                    else if (used_parts.Sum(i => i.spare) < Control.Instance.Settings.MaxSpareParts
+                            && used_parts.Sum(i => i.count - i.used - i.spare) > 0)
+                        set_info(optionsList[1], new Text(str.ButtonAddSpare).ToString(), arg =>
+                        {
+                            _state = opt_state.AddSpare;
+                            MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
+                        });
+                    else
+                        set_info(optionsList[1], new Text(str.ButtonClearSpare).ToString(), arg =>
+                        {
+                            foreach (var partsInfo in used_parts)
+                                partsInfo.spare = 0;
+                            MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
+                        });
 
+                    if (DiceBroke.CompatibleTechKits.Count > 0)
+                        if (DiceBroke.SelectedTechKit == null)
+                            set_info(optionsList[2], new Text(str.ButtonAddTechKit).ToString(), arg =>
+                            {
+                                _state = opt_state.AddMechKit;
+                                MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
+                            });
+                        else
+                            set_info(optionsList[2], new Text(str.ButtonClearTechKit).ToString(), arg =>
+                            {
+                                DiceBroke.SelectedTechKit = null;
+                                _state = opt_state.Default;
+                                MakeOptions(eventDescription, sgEventPanel, dataManager, optionParent, optionsList);
+                            });
+                    else
+                        set_info(optionsList[2], new Text(str.ButtonNoTechKit).ToString(), arg => { });
+                }
+                else
+                {
+                    set_info(optionsList[1], "---", arg => { });
+                    set_info(optionsList[2], "---", arg => { });
+                }
+
+                set_info(optionsList[3], new Text(str.ButtonCancel).ToString(), arg => { sgEventPanel.Dismiss(); });
             }
         }
 
@@ -781,10 +761,13 @@ namespace CustomSalvage
                 foreach (var info in used_parts)
                 {
                     if (info.used > 0)
-                        RemoveMechPart(info.mechid, info.used);
+                        RemoveMechPart(info.mechid, info.used + info.spare);
                 }
 
-                int total = used_parts.Sum(i => i.cbills * i.used);
+                int total = GetCbills();
+                if(DiceBroke.SelectedTechKit != null)
+                    mechBay.Sim.RemoveItemStat(DiceBroke.SelectedTechKit.Def.Description.Id, typeof(UpgradeDef), false);
+
                 Control.Instance.LogDebug($"-- take money {total}");
                 mechBay.Sim.AddFunds(-total);
                 Control.Instance.LogDebug($"-- making mech");
@@ -838,6 +821,130 @@ namespace CustomSalvage
 
             var id = GetMDefFromCDef(mech.ChassisID);
             return UnityGameInstance.BattleTechGame.DataManager.MechDefs.TryGet(id, out mech) ? result : null;
+        }
+
+        private static Dictionary<string, HashSet<string>> mechtags = new Dictionary<string, HashSet<string>>();
+
+        public static HashSet<string> GetMechTags(MechDef mech)
+        {
+            if (mech?.Chassis == null)
+                return null;
+
+            if (mechtags.TryGetValue(mech.ChassisID, out var res))
+                return res;
+
+            var new_tags = build_mech_tags(mech);
+            mechtags[mech.ChassisID] = new_tags;
+            return new_tags;
+        }
+
+        private static HashSet<string> build_mech_tags(MechDef mech)
+        {
+            var result = new HashSet<string>();
+            if (mech.MechTags != null)
+                result.UnionWith(mech.MechTags);
+            if (mech.Chassis.ChassisTags != null)
+                result.UnionWith(mech.Chassis.ChassisTags);
+
+            return result;
+        }
+    }
+
+    public class AssemblyChancesResult
+    {
+        public float LimbChance { get; private set; } = Control.Instance.Settings.RepairMechLimbsChance;
+        public float CompFChance { get; private set; } = Control.Instance.Settings.RepairComponentsFunctionalThreshold;
+        public float CompNFChance { get; private set; } = Control.Instance.Settings.RepairComponentsNonFunctionalThreshold;
+
+        public int BaseTP { get; private set; } = Control.Instance.Settings.BaseTP;
+        public float LimbTP { get; private set; } = Control.Instance.Settings.LimbChancePerTp;
+        public float CompTP { get; private set; } = Control.Instance.Settings.ComponentChancePerTp;
+#if CCDEBUG
+        public string DEBUGText { get; private set; } = "";
+#endif
+        public AssemblyChancesResult(MechDef mech, SimGameState sim, int other_parts)
+        {
+            var settings = Control.Instance.Settings;
+            if (settings.RepairChanceByTP)
+            {
+                if (settings.BrokeByTag != null && settings.BrokeByTag.Length > 1)
+                {
+                    int numb = 0;
+                    int numl = 0;
+                    int numc = 0;
+
+                    int sumb = 0;
+                    float suml = 0;
+                    float sumc = 0;
+
+                    foreach (var info in settings.BrokeByTag)
+                    {
+                        if (mech.MechTags.Contains(info.tag) || mech.Chassis.ChassisTags.Contains(info.tag))
+                        {
+#if CCDEBUG
+                            string logstr = info.tag;
+#endif
+                            if (info.BaseTp > 0)
+                            {
+                                sumb += info.BaseTp;
+                                numb += 1;
+#if CCDEBUG
+                                logstr += $" base:{info.BaseTp}";
+#endif
+                            }
+
+                            if (info.Limb > 0)
+                            {
+                                suml += info.Limb;
+                                numl += 1;
+#if CCDEBUG
+                                logstr += $" limb:{info.Limb:0.000}";
+#endif
+                            }
+                            if (info.Component > 0)
+                            {
+                                sumc += info.Component;
+                                numc += 1;
+#if CCDEBUG
+                                logstr += $" comp:{info.Component:0.000}";
+#endif
+                            }
+#if CCDEBUG
+                            Control.Instance.LogDebug(logstr);
+#endif
+
+                        }
+                    }
+
+                    if (numb > 0)
+                        BaseTP = sumb / numb;
+                    if (numl > 0)
+                        LimbTP = suml / numl;
+                    if (numc > 0)
+                        CompTP = sumc / numc;
+
+                    Control.Instance.LogDebug($"totals: base:{BaseTP}, limb:{LimbTP:0.000}, component:{CompTP:0.000}");
+
+                    var tp = sim.MechTechSkill - BaseTP;
+                    var ltp = Mathf.Clamp(tp * LimbTP, -settings.RepairTPMaxEffect, settings.RepairTPMaxEffect);
+                    var ctp = Mathf.Clamp(tp * CompTP, -settings.RepairTPMaxEffect, settings.RepairTPMaxEffect);
+
+                    Control.Instance.LogDebug($"LeftTP: {tp} limb_change = {ltp:0.000} comp_change = {ctp * CompTP:0.000}");
+#if CCDEBUG
+                    var oLimbChance = LimbChance;
+                    var oCompFChance = CompFChance;
+                    var oCompNFChance = CompNFChance;
+#endif
+                    LimbChance = Mathf.Clamp(LimbChance + ltp, settings.LimbMinChance, settings.LimbMaxChance);
+                    CompFChance = Mathf.Clamp(CompFChance + ctp, settings.ComponentMinChance, settings.ComponentMaxChance);
+                    CompNFChance = Mathf.Clamp(CompNFChance + ctp, CompFChance, settings.ComponentMaxChance);
+
+#if CCDEBUG
+                    DEBUGText = $"\nLTP : {LimbTP:0.000}/{ltp:0.000}/{(int)(oLimbChance * 100)}%";
+                    DEBUGText = $"\nCTP : {CompTP:0.000}/{ctp:0.000}/{(int)(oCompFChance * 100)}%/{(int)(oCompNFChance * 100)}%";
+#endif
+                }
+            }
         }
     }
 }

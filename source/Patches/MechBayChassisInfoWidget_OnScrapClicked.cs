@@ -20,8 +20,14 @@ namespace CustomSalvage
             if (___selectedChassis == null)
                 return false;
 
+            //foreach (var item in ___mechBay.Sim.CompanyStats)
+            //{
+            //    Control.Instance.Log($"{item.Key} : {item.Value.CurrentValue.ToString()} ");
+            //}
+
             var mech = ChassisHandler.GetMech(___selectedChassis.Description.Id);
             var name = new Text(mech.Description.UIName).ToString();
+            var strs = Control.Instance.Settings.Strings;
 
             if (___selectedChassis.MechPartMax == 0)
             {
@@ -36,11 +42,11 @@ namespace CustomSalvage
                     int n2 = Mathf.Clamp(Mathf.RoundToInt(max * Control.Instance.Settings.MaxScrapParts), 1, max);
 
 
-                    GenericPopupBuilder.Create($"Scrap {name}?",
-                            $"Do you want scrap this chassis and sale spare parts for <color=#F79B26FF>{SimGameState.GetCBillString(value)}</color> or scrap and keep parts ({n1}-{n2} parts)")
-                        .AddButton("Cancel", null, true, null)
-                        .AddButton("Keep Parts", () => SplitToParts(___selectedChassis, n1, n2, ___mechBay), true, null)
-                        .AddButton("Sale", () => ScrapChassis(1, ___selectedChassis, __instance, ___mechBay), true,
+                    GenericPopupBuilder.Create(new Text(strs.ScrapDialogTitle, name).ToString(),
+                        new Text(strs.ScrapDialogTextWithParts, SimGameState.GetCBillString(value), n1, n2).ToString())
+                        .AddButton(new Text(strs.ButtonCancel).ToString(), null, true, null)
+                        .AddButton(new Text(strs.ButtonKeepParts).ToString(), () => SplitToParts(___selectedChassis, n1, n2, ___mechBay), true, null)
+                        .AddButton(new Text(strs.ButtonSell).ToString(), () => ScrapChassis(1, ___selectedChassis, __instance, ___mechBay), true,
                             null)
                         .CancelOnEscape()
                         .AddFader(new UIColorRef?(LazySingletonBehavior<UIManager>.Instance.UILookAndColorConstants.PopupBackfill), 0f, true)
@@ -48,10 +54,10 @@ namespace CustomSalvage
                 }
                 else
                 {
-                    GenericPopupBuilder.Create($"Scrap {name}?",
-                            $"Are you sure you want to scrap this 'Mech Chassis? It will be removed permanently from your inventory.\n\nSCRAP VALUE: <color=#F79B26FF>{SimGameState.GetCBillString(value)}</color>")
-                        .AddButton("Cancel", null, true, null)
-                        .AddButton("scrap", () => ScrapChassis(1, ___selectedChassis, __instance, ___mechBay), true,
+                    GenericPopupBuilder.Create(new Text(strs.ScrapDialogTitle, name).ToString(),
+                            new Text(strs.ScrapDialogText, SimGameState.GetCBillString(value)).ToString())
+                        .AddButton(new Text(strs.ButtonCancel).ToString(), null, true, null)
+                        .AddButton(new Text(strs.ButtonScrap).ToString(), () => ScrapChassis(1, ___selectedChassis, __instance, ___mechBay), true,
                             null)
                         .CancelOnEscape()
                         .AddFader(new UIColorRef?(LazySingletonBehavior<UIManager>.Instance.UILookAndColorConstants.PopupBackfill), 0f, true)
@@ -67,24 +73,22 @@ namespace CustomSalvage
 
                 if (num == 1)
                 {
-                    GenericPopupBuilder.Create($"Scrap {name} part?",
-                            $"Are you sure you want to scrap this 'Mech part? It will be removed permanently from your inventory.\n\nSCRAP VALUE: <color=#F79B26FF>{SimGameState.GetCBillString(value)}</color>")
-                        .AddButton("Cancel", null, true, null)
-                        .AddButton("Scrap", () => ScrapParts(1, ___selectedChassis, __instance, ___mechBay), true, null)
+                    GenericPopupBuilder.Create(new Text(strs.ScrapPartsDialogTitle, name).ToString(),
+                            new Text(strs.ScrapPartsDialogText, SimGameState.GetCBillString(value)).ToString())
+                        .AddButton(new Text(strs.ButtonCancel).ToString(), null, true, null)
+                        .AddButton(new Text(strs.ButtonScrap).ToString(), () => ScrapParts(1, ___selectedChassis, __instance, ___mechBay), true, null)
                         
                         .CancelOnEscape().AddFader(new UIColorRef?(LazySingletonBehavior<UIManager>.Instance.UILookAndColorConstants.PopupBackfill), 0f, true).Render();
                 }
                 else
                 {
- //                   var popup = LazySingletonBehavior<UIManager>.Instance.GetOrCreatePopupModule<SG_Stores_MultiPurchasePopup>(string.Empty);
-                   
                     var shopdef = new ShopDefItem(mech.Description.Id, ShopItemType.MechPart, 1, num, true, false, value);
-
-                    SG_Stores_MultiPurchasePopup_Handler.StartDialog("Scrap", shopdef, mech.Description.Name + " Parts", num, value,
+                    SG_Stores_MultiPurchasePopup_Handler.StartDialog(new Text(strs.ScrapMultyPartsDialogTitle).ToString(), shopdef,
+                        new Text(strs.ScrapMultyPartsDialogText, mech.Description.Name).ToString(),
+                        num, value,
                         (n) => ScrapParts(n, ___selectedChassis, __instance, ___mechBay),
                         () => { return; }, ___mechBay.Sim);
 
-//                    popup.SetData(___mechBay.Sim, shopdef, name + " parts", num, value, (n) => ScrapParts(n, ___selectedChassis, __instance, ___mechBay));
                 }
             }
 
@@ -95,16 +99,19 @@ namespace CustomSalvage
         private static void SplitToParts(ChassisDef chassisDef, int min, int max, MechBayPanel mechBay)
         {
             int k = mechBay.Sim.NetworkRandom.Int(min, max+1);
+            if (Control.Instance.Settings.DEBUG_LOTOFPARTS)
+                k = 20;
             UnityGameInstance.BattleTechGame.Simulation.ScrapInactiveMech(chassisDef.Description.Id, false);
             var mech = ChassisHandler.GetMech(chassisDef.Description.Id);
             for (int i = 0;i < k;i++ )
                 mechBay.Sim.AddMechPart(mech.Description.Id);
             mechBay.RefreshData(false);
             mechBay.SelectChassis(null);
+            var strs = Control.Instance.Settings.Strings;
 
-            GenericPopupBuilder.Create($"Scraped {mech.Description.UIName}.",
-                    $"We manage to get <color=#20ff20>{k}</color> parts from {mech.Description.UIName} chassis")
-                .AddButton("Ok", null, true, null)
+            GenericPopupBuilder.Create(new Text(strs.ScrapResultTitle, mech.Description.UIName).ToString(),
+                new Text(strs.ScrapResultTitle, k, mech.Description.UIName).ToString())
+                .AddButton(new Text(strs.ButtonOk).ToString(), null, true, null)
                 .CancelOnEscape().AddFader(new UIColorRef?(LazySingletonBehavior<UIManager>.Instance.UILookAndColorConstants.PopupBackfill), 0f, true).Render();
         }
 
